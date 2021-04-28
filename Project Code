@@ -1,0 +1,67 @@
+#create a manifest file
+$ ls -1 "$PWD/"*.2*
+
+ssh <name>@bell.rcac.purdue.edu
+$ module load bioinfo
+$ module load Qiime/2-2020.11
+
+
+echo "Start time"
+date +"%d %B %Y %H:%M:%S"
+
+qiime tools import --type 'SampleData[SequencesWithQuality]' --input-path Manifest.txt --output-path demux.qza --input-format SingleEndFastqManifestPhred33V2
+
+
+#Demux step
+
+qiime demux emp-single --i-seqs emp-single-end-sequences.qza --m-barcodes-file SraRunInfo_Metadata.txt --m-barcodes-column barcode-sequence --o-per-sample-sequences demux.qza --o-error-correction-details demux-details.qza
+
+echo'Demux Done!'
+
+#Summarize Demux
+
+qiime demux summarize --i-data demux.qza --o-visualization demux.qzv
+
+#DADA2 
+
+qiime dada2 denoise-single --i-demultiplexed-seqs demux.qza --p-trim-left 0 --p-trunc-len 400 --o-representative-sequences rep-seqs-400.qza --o-table table-400.qza --o-denoising-stats stats-400dada2.qza
+
+qiime metadata tabulate --m-input-file stats-400dada2.qza --o-visualization stats-400dada2.qzv
+
+mv rep-seqs-400.qza rep-seqs.qza
+mv table-400.qza table.qza
+
+#Identifier-based filtering
+qiime feature-table filter-samples --i-table table.qza --m-metadata-file SraRunInfo_Metadata.txt --o-filtered-table id-filtered-table.qza
+
+#featureTable
+qiime feature-table summarize --i-table id-filtered-table.qza --o-visualization id-filtered-table.qzv --m-Metadata-file SraRunInfo_Metadata.txt
+qiime feature-table tabulate-seqs --i-data rep-seqs-400.qza --o-visualization rep-seqs-400.qzv
+
+#Tree_for_phylogenetic_analysis
+qiime phylogeny align-to-tree-mafft-fasttree --i-sequences rep-seqs-400.qza --o-alignment aligned-rep-seqs.qza --o-masked-alignment masked-aligned-rep-seqs.qza --o-tree unrooted-tree.qza --o-rooted-tree rooted-tree.qza
+
+#Alpha_and_Beta_Diversity
+qiime diversity core-metrics-phylogenetic --i-phylogeny rooted-tree.qza --i-table id-filtered-table.qza --p-sampling-depth 1857 --m-metadata-file SraRunInfo_Metadata.txt --output-dir core-metrics-results
+
+#Alpha_rarefaction_plotting
+qiime diversity alpha-rarefaction --i-table table.qza --i-phylogeny rooted-tree.qza --p-max-depth 15000 --m-metadata-file SraRunInfo_Metadata.txt --o-visualization alpha-rarefaction.qzv
+
+#create_classifier
+$ qiime feature-classifier extract-reads --i-sequences silva-138-99-seqs.qza --p-f-primer CCTACGGGAGGCAGCAG  --p-r-primer CCGTCAATTCMTTTRAGT  --p-min-length 0  --p-max-length 400  --p-n-jobs 12 --o-reads ref-seqs-V5-V3.qza
+
+#Train_classifier
+qiime feature-classifier fit-classifier-naive-bayes --i-reference-reads ref-seqs-V5-V3.qza --i-reference-taxonomy silva-138-99-tax.qza --o-classifier silva-classifier-V5V3.qza
+
+#Taxonomic_analysis
+qiime feature-classifier classify-sklearn --i-classifier silva-classifier-V5V3.qza --i-reads scratch/bell/richmo10/data_download/use-scheduler/new-scripts/rep-seqs-400.qza --p-n-jobs -1 --o-classification taxonomyv5v3.qza
+
+qiime metadata tabulate --m-input-file taxonomyv5v3.qza --o-visualization taxonomyv5v3.qzv
+
+qiime taxa barplot --i-table id-filtered-table.qza --i-taxonomy taxonomyv5v3.qza  --m-metadata-file SraRunInfo_Metadata.txt --o-visualization taxa-bar-plots.qzv
+
+#ANCOM
+qiime feature-table filter-samples --i-table id-filtered-table.qza --m-metadata-file SraRunInfo_Metadata.txt --p-where ""--o-filtered-table  Vaginal-table.qza
+
+qiime composition add-pseudocount --i-table  Vaginal-table.qza --o-composition-table comp-Vaginal-table.qza
+qiime composition ancom --i-table comp-Vaginal-table.qza --m-metadata-file SraRunInfo_Metadata.txt --m-metadata-column BirthMode --o-visualization ancom-subject.qzv
